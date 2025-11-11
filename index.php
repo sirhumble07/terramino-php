@@ -75,6 +75,17 @@
     </div>
 
     <div class="card">
+      <h2 style="margin-top:0;">Azure IMDS (Full JSON)</h2>
+      <?php if ($imdsError): ?>
+        <p><strong style="color:#ffcccc;">IMDS error:</strong> <?php echo htmlspecialchars($imdsError, ENT_QUOTES); ?></p>
+      <?php elseif ($instance): ?>
+        <details>
+          <summary>Show/Hide full metadata</summary>
+          <pre><?php echo htmlspecialchars(json_encode($instance, JSON_PRETTY_PRINT), ENT_QUOTES); ?></pre>
+        </details>
+      <?php else: ?>
+        <p>No IMDS data returned.</p>
+      <?php endif; ?>
     </div>
   </div>
 
@@ -178,4 +189,3 @@
   </script>
 </body>
 </html>
-
