@@ -116,3 +116,7 @@ $full_metadata_pretty = json_encode(json_decode($full_metadata, true), JSON_PRET
       }
     }
   </script>
+</body>
+</html>
+  
+
