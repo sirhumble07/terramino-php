@@ -1,122 +1,191 @@
 <!DOCTYPE html>
 <html>
-
 <head>
+  <meta charset="utf-8" />
   <title>Terramino</title>
   <link rel="icon" href="https://www.terraform.io/favicon.ico" type="image/x-icon" />
   <style>
-    html, body { height: 100%; margin: 0; }
+    html, body { height:100%; margin:0; }
     body {
       background-image: url("https://github.com/hashicorp/learn-terramino/raw/master/background.png");
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: white;
-      font-family: Arial, Helvetica, sans-serif;
+      display:flex; align-items:center; justify-content:center;
+      color:white; font-family: Arial, Helvetica, sans-serif;
     }
-    h1 { font-family: Impact, Charcoal, sans-serif; }
-    canvas { border: 1px solid white; }
-
-    .container { position: relative; margin: 0 auto; }
-    .content { position: relative; left: 0; top: 0; }
-    .attribute-name { display: inline-block; font-weight: bold; width: 10em; }
-
-    /* NEW: metadata panel */
-    #metadata-box {
-      background: rgba(0,0,0,0.6);
-      padding: 10px;
-      border-radius: 8px;
-      margin-top: 10px;
-      max-width: 600px;
-      white-space: pre-wrap;
-      font-size: 14px;
-      display: none;
-      overflow-x: auto;
-    }
-
-    #toggle-btn {
-      background-color: #444;
-      color: #fff;
-      padding: 6px 10px;
-      border: none;
-      border-radius: 5px;
-      cursor: pointer;
-      margin-bottom: 8px;
-    }
+    h1 { font-family: Impact, Charcoal, sans-serif; margin:0 0 10px; }
+    canvas { border:1px solid white; }
+    .page { max-width: 1100px; margin: 0 auto; display: grid; gap: 20px; grid-template-columns: 360px 360px 1fr; align-items:start; }
+    .card { background: rgba(0,0,0,0.45); border:1px solid rgba(255,255,255,0.2); border-radius: 12px; padding: 16px; }
+    .attribute-name { display:inline-block; font-weight:bold; width: 10em; }
+    pre { white-space: pre-wrap; word-break: break-word; background: rgba(0,0,0,0.35); padding:12px; border-radius:8px; max-height: 70vh; overflow:auto; }
+    details { margin-top: 10px; }
   </style>
 </head>
-
 <?php
-// SAFELY GET METADATA FROM AZURE IMDS
-function get_imds($path) {
-    $url = "http://169.254.169.254/metadata/" . $path . "?api-version=2021-02-01";
+  // ----- Fetch Azure IMDS (full JSON) -----
+  // Docs: https://learn.microsoft.com/azure/virtual-machines/instance-metadata-service
+  $apiVersion = '2025-04-07'; // supported as per current docs
+  $base = "http://169.254.169.254/metadata";
 
-    $ch = curl_init();
-    curl_setopt_array($ch, [
-        CURLOPT_URL => $url,
-        CURLOPT_HTTPHEADER => ['Metadata:true'],
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_CONNECTTIMEOUT => 1,
-        CURLOPT_TIMEOUT => 2
-    ]);
+  // cURL handle
+  $ch = curl_init();
+  // Ensure we bypass any proxy for link-local IMDS
+  if (defined('CURLOPT_NOPROXY')) {
+    curl_setopt($ch, CURLOPT_NOPROXY, '*');
+  }
+  curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+  curl_setopt($ch, CURLOPT_HTTPHEADER, array('Metadata:true'));
 
-    $output = curl_exec($ch);
-    $http = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+  // Get full instance metadata
+  $instanceUrl = $base . "/instance?api-version=" . $apiVersion;
+  curl_setopt($ch, CURLOPT_URL, $instanceUrl);
+  $instanceJson = curl_exec($ch);
+  $imdsError = null;
+  if ($instanceJson === false) {
+    $imdsError = curl_error($ch);
+    $instance = null;
+  } else {
+    $instance = json_decode($instanceJson, true);
+  }
 
-    if ($http === 200 && $output) {
-        return $output;
-    }
-    return null;
-}
+  // Convenience leaf queries (format=text is recommended for direct leaves)
+  function imds_leaf($ch, $path, $apiVersion) {
+    $url = "http://169.254.169.254/metadata/instance/{$path}?api-version={$apiVersion}&format=text";
+    curl_setopt($ch, CURLOPT_URL, $url);
+    return curl_exec($ch);
+  }
 
-// BASIC FIELDS
-$vm_name = get_imds("instance/compute/name") ?: "N/A";
-$zone = get_imds("instance/compute/zone") ?: "N/A";
-$resource_id = get_imds("instance/compute/resourceId") ?: "N/A";
+  $vm_name    = imds_leaf($ch, "compute/name",       $apiVersion);
+  $zone       = imds_leaf($ch, "compute/zone",       $apiVersion);
+  $resourceId = imds_leaf($ch, "compute/resourceId", $apiVersion);
 
-// FULL METADATA (ALL JSON)
-$full_metadata = get_imds("instance") ?: json_encode(["error" => "Metadata unavailable"], JSON_PRETTY_PRINT);
-$full_metadata_pretty = json_encode(json_decode($full_metadata, true), JSON_PRETTY_PRINT);
+  curl_close($ch);
 ?>
-
 <body>
-  <div class="container">
-    <div class="content">
+  <div class="page">
+    <div class="card">
       <h1>Terramino</h1>
-
-      <p><span class="attribute-name">VM Name:</span><code><?= htmlspecialchars($vm_name) ?></code></p>
-      <p><span class="attribute-name">Instance ID:</span><code><?= htmlspecialchars($resource_id) ?></code></p>
-      <p><span class="attribute-name">Availability Zone:</span><code><?= htmlspecialchars($zone) ?></code></p>
-
-      <!-- NEW: Full metadata toggle -->
-      <button id="toggle-btn" onclick="toggleMeta()">Show Full Metadata</button>
-      <div id="metadata-box"><?= htmlspecialchars($full_metadata_pretty) ?></div>
-
-      <p>Use left and right arrow keys to move blocks.<br />Use up arrow key to flip block.</p>
+      <p><span class="attribute-name">VM Name:</span><code><?php echo htmlspecialchars($vm_name ?? '', ENT_QUOTES); ?></code></p>
+      <p><span class="attribute-name">Instance ID:</span><code><?php echo htmlspecialchars($resourceId ?? '', ENT_QUOTES); ?></code></p>
+      <p><span class="attribute-name">Availability Zone:</span><code><?php echo htmlspecialchars($zone ?? '', ENT_QUOTES); ?></code></p>
+      <p>Use ← → to move, ↑ to rotate, ↓ to drop.</p>
     </div>
 
-    <div class="content">
+    <div class="card">
       <canvas width="320" height="640" id="game"></canvas>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0;">Azure IMDS (Full JSON)</h2>
+      <?php if ($imdsError): ?>
+        <p><strong style="color:#ffcccc;">IMDS error:</strong> <?php echo htmlspecialchars($imdsError, ENT_QUOTES); ?></p>
+      <?php elseif ($instance): ?>
+        <details open>
+          <summary>Show/Hide full metadata</summary>
+          <pre><?php echo htmlspecialchars(json_encode($instance, JSON_PRETTY_PRINT), ENT_QUOTES); ?></pre>
+        </details>
+      <?php else: ?>
+        <p>No IMDS data returned.</p>
+      <?php endif; ?>
     </div>
   </div>
 
   <script>
-    // Metadata Collapse Toggle
-    function toggleMeta() {
-      const box = document.getElementById("metadata-box");
-      const btn = document.getElementById("toggle-btn");
+    // --- Terramino (Tetris-like) game ---
+    function getRandomInt(min, max) { min = Math.ceil(min); max = Math.floor(max); return Math.floor(Math.random()*(max-min+1))+min; }
+    function generateSequence() {
+      const sequence = ["I","J","L","O","S","T","Z"];
+      while (sequence.length) { const rand = getRandomInt(0, sequence.length-1); tetrominoSequence.push(sequence.splice(rand,1)[0]); }
+    }
+    function getNextTetromino() {
+      if (!tetrominoSequence.length) generateSequence();
+      const name = tetrominoSequence.pop();
+      const matrix = tetrominos[name];
+      const col = playfield[0].length / 2 - Math.ceil(matrix[0].length/2);
+      const row = name === "I" ? -1 : -2;
+      return { name, matrix, row, col };
+    }
+    function rotate(m) { const N = m.length - 1; return m.map((r,i)=>r.map((v,j)=>m[N-j][i])); }
+    function isValidMove(matrix, cellRow, cellCol) {
+      for (let r=0; r<matrix.length; r++) for (let c=0; c<matrix[r].length; c++) if (matrix[r][c] &&
+        (cellCol+c<0 || cellCol+c>=playfield[0].length || cellRow+r>=playfield.length || playfield[cellRow+r][cellCol+c])) return false;
+      return true;
+    }
+    function placeTetromino() {
+      for (let r=0; r<tetromino.matrix.length; r++) for (let c=0; c<tetromino.matrix[r].length; c++) if (tetromino.matrix[r][c]) {
+        if (tetromino.row + r < 0) return showGameOver();
+        playfield[tetromino.row+r][tetromino.col+c] = tetromino.name;
+      }
+      for (let r=playfield.length-1; r>=0;) {
+        if (playfield[r].every(cell=>!!cell)) { for (let rr=r; rr>=0; rr--) playfield[rr]=playfield[rr-1]; }
+        else r--;
+      }
+      tetromino = getNextTetromino();
+    }
+    function showGameOver() {
+      cancelAnimationFrame(rAF); gameOver=true;
+      context.fillStyle="black"; context.globalAlpha=0.75; context.fillRect(0, canvas.height/2-30, canvas.width, 60);
+      context.globalAlpha=1; context.fillStyle="white"; context.font="36px monospace"; context.textAlign="center"; context.textBaseline="middle";
+      context.fillText("GAME OVER!", canvas.width/2, canvas.height/2);
+    }
 
-      if (box.style.display === "none") {
-        box.style.display = "block";
-        btn.textContent = "Hide Metadata";
-      } else {
-        box.style.display = "none";
-        btn.textContent = "Show Full Metadata";
+    const canvas = document.getElementById("game");
+    const context = canvas.getContext("2d");
+    const grid = 32;
+    const tetrominoSequence = [];
+    const playfield = [];
+    for (let r=-2; r<20; r++) { playfield[r]=[]; for (let c=0; c<10; c++) playfield[r][c]=0; }
+    const tetrominos = {
+      I:[[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],
+      J:[[1,0,0],[1,1,1],[0,0,0]],
+      L:[[0,0,1],[1,1,1],[0,0,0]],
+      O:[[1,1],[1,1]],
+      S:[[0,1,1],[1,1,0],[0,0,0]],
+      Z:[[1,1,0],[0,1,1],[0,0,0]],
+      T:[[0,1,0],[1,1,1],[0,0,0]]
+    };
+    const colors = { I:"#623CE4", O:"#7C8797", T:"#00BC7F", S:"#CA2171", Z:"#1563ff", J:"#00ACFF", L:"white" };
+
+    let count=0, tetromino=getNextTetromino(), rAF=null, gameOver=false;
+
+    function loop() {
+      rAF = requestAnimationFrame(loop);
+      context.clearRect(0,0,canvas.width,canvas.height);
+
+      for (let r=0; r<20; r++) for (let c=0; c<10; c++) if (playfield[r][c]) {
+        context.fillStyle = colors[playfield[r][c]];
+        context.fillRect(c*grid, r*grid, grid-1, grid-1);
+      }
+
+      if (tetromino) {
+        if (++count > 35) {
+          tetromino.row++; count=0;
+          if (!isValidMove(tetromino.matrix, tetromino.row, tetromino.col)) { tetromino.row--; placeTetromino(); }
+        }
+        context.fillStyle = colors[tetromino.name];
+        for (let r=0; r<tetromino.matrix.length; r++) for (let c=0; c<tetromino.matrix[r].length; c++) if (tetromino.matrix[r][c]) {
+          context.fillRect((tetromino.col+c)*grid, (tetromino.row+r)*grid, grid-1, grid-1);
+        }
       }
     }
+
+    document.addEventListener("keydown", e => {
+      if (gameOver) return;
+      if (e.which===37 || e.which===39) {
+        const col = e.which===37 ? tetromino.col-1 : tetromino.col+1;
+        if (isValidMove(tetromino.matrix, tetromino.row, col)) tetromino.col = col;
+      }
+      if (e.which===38) {
+        const m = rotate(tetromino.matrix);
+        if (isValidMove(m, tetromino.row, tetromino.col)) tetromino.matrix = m;
+      }
+      if (e.which===40) {
+        const row = tetromino.row + 1;
+        if (!isValidMove(tetromino.matrix, row, tetromino.col)) { tetromino.row = row - 1; placeTetromino(); return; }
+        tetromino.row = row;
+      }
+    });
+
+    rAF = requestAnimationFrame(loop);
   </script>
 </body>
 </html>
-  
-
